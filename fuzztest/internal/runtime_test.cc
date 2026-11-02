@@ -14,6 +14,14 @@
 
 #include "./fuzztest/internal/runtime.h"
 
+#include "absl/strings/string_view.h"
+
+#if defined(__linux__)
+#include <signal.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 #include <string>
 #include <tuple>
 #include <utility>
@@ -43,7 +51,31 @@ TEST(OnFailureTest, Output) {
   Configuration configuration;
   std::tuple args(17, std::string("ABC"));
   const RuntimeStats stats = {absl::FromUnixNanos(0), 1, 2, 3, 4, 5};
+#if defined(__linux__)
+  static int old_sigtrap_count = 0;
+  struct sigaction old_sigtrap = {};
+  old_sigtrap.sa_sigaction = [](int, siginfo_t*, void*) {
+    ++old_sigtrap_count;
+  };
+  old_sigtrap.sa_flags = SA_SIGINFO;
+  ASSERT_EQ(sigaction(SIGTRAP, &old_sigtrap, nullptr), 0);
+#endif
   runtime.EnableReporter(&stats, [] { return absl::FromUnixNanos(1979); });
+#if defined(__linux__)
+  siginfo_t sigtrap_info = {};
+  sigtrap_info.si_signo = SIGTRAP;
+  sigtrap_info.si_code = SI_TIMER;
+  ASSERT_EQ(syscall(SYS_rt_tgsigqueueinfo, getpid(), syscall(SYS_gettid),
+                    SIGTRAP, &sigtrap_info),
+            0);
+  EXPECT_EQ(old_sigtrap_count, 1);
+  runtime.SetCrashTypeIfUnset("Custom crash type");
+  std::string seen_crash_type;
+  runtime.RegisterCrashMetadataListener(
+      [&](absl::string_view crash_type, absl::Span<const std::string>) {
+        seen_crash_type = std::string(crash_type);
+      });
+#endif
   runtime.SetRunMode(RunMode::kFuzz);
   UntypedDomain domain = TupleOf(Arbitrary<int>(), Arbitrary<std::string>());
   GenericDomainCorpusType generic_args(
@@ -52,6 +84,9 @@ TEST(OnFailureTest, Output) {
   runtime.SetCurrentTest(&test, &configuration);
   runtime.SetCurrentArgs(&debug_args);
   const std::string report = get_failure();
+#if defined(__linux__)
+  EXPECT_EQ(seen_crash_type, "Custom crash type");
+#endif
 
   EXPECT_TRUE(absl::StartsWith(report, R"(
 =================================================================
