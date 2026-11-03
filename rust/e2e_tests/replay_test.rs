@@ -23,11 +23,7 @@ fn get_target_binary_path(fixture: &EnvVars) -> PathBuf {
     if let Some(path) = std::env::var_os("CARGO_BIN_EXE_replay_fuzz_tests_bin") {
         return PathBuf::from(path);
     }
-    fixture
-        .target_binary_path
-        .parent()
-        .expect("target_binary_path must have a parent")
-        .join("replay_fuzz_tests_bin")
+    fixture.binary_path("replay_fuzz_tests_bin")
 }
 
 #[gtest]
