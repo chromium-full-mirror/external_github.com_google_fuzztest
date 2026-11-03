@@ -227,8 +227,8 @@ class Runtime {
 
   void PrintFinalStats(absl::FormatRawSink out) const;
   void PrintFinalStatsOnDefaultSink() const;
-  void PrintReport(absl::FormatRawSink out) const;
-  void PrintReportOnDefaultSink() const;
+  void PrintReport(absl::FormatRawSink out);
+  void PrintReportOnDefaultSink();
 
   // Registers a crash metadata listener that will be called when crash metadata
   // is available.

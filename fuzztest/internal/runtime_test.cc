@@ -14,6 +14,10 @@
 
 #include "./fuzztest/internal/runtime.h"
 
+#if defined(__linux__)
+#include <signal.h>
+#endif
+
 #include <string>
 #include <tuple>
 #include <utility>
@@ -21,6 +25,7 @@
 #include "gtest/gtest.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "./fuzztest/domain_core.h"
 #include "./fuzztest/internal/configuration.h"
@@ -43,7 +48,22 @@ TEST(OnFailureTest, Output) {
   Configuration configuration;
   std::tuple args(17, std::string("ABC"));
   const RuntimeStats stats = {absl::FromUnixNanos(0), 1, 2, 3, 4, 5};
+#if defined(__linux__)
+  static int old_sigtrap_count = 0;
+  struct sigaction old_sigtrap = {};
+  old_sigtrap.sa_sigaction = [](int, siginfo_t*, void*) {
+    ++old_sigtrap_count;
+    // Simulate sanitizer death callback running after HandleCrash chains to
+    // the previous signal handler.
+    Runtime::instance().PrintReportOnDefaultSink();
+  };
+  old_sigtrap.sa_flags = SA_SIGINFO;
+  ASSERT_EQ(sigaction(SIGTRAP, &old_sigtrap, nullptr), 0);
+#endif
   runtime.EnableReporter(&stats, [] { return absl::FromUnixNanos(1979); });
+  int crash_metadata_listener_calls = 0;
+  runtime.RegisterCrashMetadataListener(
+      [&](absl::string_view, auto) { ++crash_metadata_listener_calls; });
   runtime.SetRunMode(RunMode::kFuzz);
   UntypedDomain domain = TupleOf(Arbitrary<int>(), Arbitrary<std::string>());
   GenericDomainCorpusType generic_args(
@@ -52,6 +72,7 @@ TEST(OnFailureTest, Output) {
   runtime.SetCurrentTest(&test, &configuration);
   runtime.SetCurrentArgs(&debug_args);
   const std::string report = get_failure();
+  EXPECT_EQ(crash_metadata_listener_calls, 1);
 
   EXPECT_TRUE(absl::StartsWith(report, R"(
 =================================================================
@@ -91,6 +112,25 @@ For reproducing findings please rely on file based reproduction.
 =================================================================
 )"));
 
+  // Once a report is printed, subsequent PrintReport calls or crashing signals
+  // in the same EnableReporter session must not emit a duplicate report.
+  EXPECT_EQ(get_failure(), "");
+  EXPECT_EQ(crash_metadata_listener_calls, 1);
+#if defined(__linux__)
+  ASSERT_EQ(raise(SIGTRAP), 0);
+  EXPECT_EQ(old_sigtrap_count, 1);
+  EXPECT_EQ(crash_metadata_listener_calls, 1);
+
+  // Re-enabling the reporter allows printing again, and when HandleCrash chains
+  // to an old handler that triggers the death callback, the report is emitted
+  // only once.
+  runtime.EnableReporter(&stats, [] { return absl::FromUnixNanos(1979); });
+  ASSERT_EQ(raise(SIGTRAP), 0);
+  EXPECT_EQ(old_sigtrap_count, 2);
+  EXPECT_EQ(crash_metadata_listener_calls, 2);
+#endif
+
+  runtime.EnableReporter(&stats, [] { return absl::FromUnixNanos(1979); });
   runtime.DisableReporter();
   EXPECT_EQ(get_failure(), "");
 }
