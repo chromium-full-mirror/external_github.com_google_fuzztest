@@ -260,6 +260,7 @@ cc_library(
         ":flag_name",
         ":registry",
         ":runtime",
+        ":sanitizer_interface",
         "@abseil-cpp//absl/status:statusor",
         "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/strings:str_format",
@@ -460,6 +461,7 @@ cc_test(
     deps = [
         ":configuration",
         ":runtime",
+        ":sanitizer_interface",
         ":test_protobuf_cc_proto",
         "@abseil-cpp//absl/base:core_headers",
         "@abseil-cpp//absl/status:statusor",

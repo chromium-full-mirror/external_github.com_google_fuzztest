@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <ostream>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -198,6 +199,41 @@ inline std::vector<uint8_t> ToByteArray(std::string_view str) {
 // limitation and efficiency reasons. Consider refining the domain definitions
 // to restrict input generation if possible.
 void SkipTestsOrCurrentInput();
+
+// Attaches a custom failure deduplication key when streamed into a failing
+// GoogleTest assertion (e.g., `ASSERT_THAT`, `EXPECT_OK`, `FAIL`) or Abseil
+// `CHECK*` / `LOG(FATAL)` statement in a fuzz test:
+//
+//   ASSERT_THAT(actual, Eq(expected)) << fuzztest::FailureKey("stage_a")
+//                                     << "Extra context: " << details;
+//
+// In fuzzing mode, failures with equal `FailureKey`s (within the same failure
+// category) are deduplicated together, while distinct `FailureKey`s are
+// reported as separate bugs. Passing an empty key (`""`) is a no-op and leaves
+// the default deduplication behavior unchanged.
+//
+// Guidelines for choosing failure keys:
+//   1. Keep keys stable across binary versions: Do not include `__LINE__`,
+//      memory addresses, or unstable ordinal indices that shift when unrelated
+//      source lines are added or removed.
+//   2. Never derive keys from fuzzed inputs: Do not include input values,
+//      input hashes, or raw error messages (`status.message()`), which would
+//      create a separate bug report per input. Stream input-specific details
+//      as normal assertion message text instead.
+//   3. Keep active cardinality low: Each distinct key occupies its own bug
+//      bucket. Computing a key dynamically on failure is fine when the result
+//      is deterministic, input-independent, and stable across builds.
+class FailureKey {
+ public:
+  explicit FailureKey(std::string key) : key_(std::move(key)) {}
+
+  std::string_view value() const { return key_; }
+
+  friend std::ostream& operator<<(std::ostream& os, const FailureKey& key);
+
+ private:
+  std::string key_;
+};
 
 }  // namespace fuzztest
 

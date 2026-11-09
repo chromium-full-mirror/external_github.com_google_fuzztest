@@ -16,7 +16,9 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
+#include <thread>  // NOLINT
 #include <vector>
 
 #include "gmock/gmock.h"
@@ -826,6 +828,87 @@ TEST(FuzzTestComputeSanitizerCrashSignatureDeathTest,
                 "test_app::RaceThreadA"));
 }
 #endif  // defined(ABSL_HAVE_THREAD_SANITIZER)
+
+std::optional<absl::string_view> GetPendingAssertionFailureKey() {
+  size_t size = 0;
+  const char* data = FuzzTestGetPendingAssertionFailureKey(&size);
+  if (data == nullptr) {
+    EXPECT_EQ(size, 0);
+    return std::nullopt;
+  }
+  EXPECT_GT(size, 0);
+  return absl::string_view(data, size);
+}
+
+TEST(AssertionFailureKeyInterfaceTest,
+     PendingAssertionFailureKeySetGetAndClear) {
+  FuzzTestClearPendingAssertionFailureKey();
+  EXPECT_EQ(GetPendingAssertionFailureKey(), std::nullopt);
+
+  const absl::string_view key = "key_1";
+  FuzzTestSetPendingAssertionFailureKey(key.data(), key.size());
+  EXPECT_EQ(GetPendingAssertionFailureKey(), "key_1");
+  // Getting does not clear the pending slot.
+  EXPECT_EQ(GetPendingAssertionFailureKey(), "key_1");
+
+  // Setting another key replaces the previously pending key.
+  const absl::string_view key2 = "key_2";
+  FuzzTestSetPendingAssertionFailureKey(key2.data(), key2.size());
+  EXPECT_EQ(GetPendingAssertionFailureKey(), "key_2");
+
+  FuzzTestClearPendingAssertionFailureKey();
+  EXPECT_EQ(GetPendingAssertionFailureKey(), std::nullopt);
+}
+
+TEST(AssertionFailureKeyInterfaceTest,
+     SanitizesControlCharsAndPreservesUtf8Boundaries) {
+  const std::string raw("line1\nline2\r\t\0\x7fok", 17);
+  FuzzTestSetPendingAssertionFailureKey(raw.data(), raw.size());
+  EXPECT_EQ(GetPendingAssertionFailureKey(), "line1_line2____ok");
+
+  // Long ASCII key is truncated to 256 bytes.
+  const std::string long_ascii(300, 'x');
+  FuzzTestSetPendingAssertionFailureKey(long_ascii.data(), long_ascii.size());
+  EXPECT_EQ(GetPendingAssertionFailureKey(), std::string(256, 'x'));
+
+  // Multi-byte UTF-8 character straddling byte 256 (e.g., 4-byte emoji U+1F600
+  // `\xF0\x9F\x98\x80` starting at byte 254) must not be split mid-codepoint.
+  const std::string prefix(254, 'a');
+  const std::string utf8_straddling = prefix + "\xF0\x9F\x98\x80" + "tail";
+  FuzzTestSetPendingAssertionFailureKey(utf8_straddling.data(),
+                                        utf8_straddling.size());
+  EXPECT_EQ(GetPendingAssertionFailureKey(), prefix);
+
+  // When a 4-byte UTF-8 character ends right at byte 256, it is kept intact.
+  const std::string prefix_exact(252, 'b');
+  const std::string utf8_exact = prefix_exact + "\xF0\x9F\x98\x80" + "tail";
+  FuzzTestSetPendingAssertionFailureKey(utf8_exact.data(), utf8_exact.size());
+  EXPECT_EQ(GetPendingAssertionFailureKey(), prefix_exact + "\xF0\x9F\x98\x80");
+  FuzzTestClearPendingAssertionFailureKey();
+}
+
+TEST(AssertionFailureKeyInterfaceTest,
+     PendingAssertionFailureKeyIsThreadLocal) {
+  FuzzTestSetPendingAssertionFailureKey("main_thread_key", 15);
+  std::optional<std::string> worker_initial;
+  std::optional<std::string> worker_after_set;
+  std::thread worker([&] {
+    if (auto k = GetPendingAssertionFailureKey()) {
+      worker_initial = std::string(*k);
+    }
+    FuzzTestSetPendingAssertionFailureKey("worker_key", 10);
+    if (auto k = GetPendingAssertionFailureKey()) {
+      worker_after_set = std::string(*k);
+    }
+    FuzzTestClearPendingAssertionFailureKey();
+  });
+  worker.join();
+
+  EXPECT_EQ(worker_initial, std::nullopt);
+  EXPECT_EQ(worker_after_set, "worker_key");
+  EXPECT_EQ(GetPendingAssertionFailureKey(), "main_thread_key");
+  FuzzTestClearPendingAssertionFailureKey();
+}
 
 }  // namespace
 }  // namespace fuzztest::internal

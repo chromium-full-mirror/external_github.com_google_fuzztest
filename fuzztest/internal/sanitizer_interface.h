@@ -87,6 +87,36 @@ size_t FuzzTestComputeSanitizerCrashSignature(const char* crash_type_data,
                                               size_t crash_type_size, char* out,
                                               size_t out_size);
 
+// Sanitizes a non-empty `(assertion_failure_key, assertion_failure_key_size)`
+// (replacing ASCII control characters `< 0x20` or `0x7F` with `'_'` and
+// truncating to at most 256 bytes without splitting multi-byte UTF-8 code
+// points when `assertion_failure_key` is valid UTF-8) and stores it as the
+// calling thread's pending assertion failure key (replacing any previous
+// pending key on this thread).
+//
+// Precondition: `assertion_failure_key != nullptr &&
+// assertion_failure_key_size > 0`.
+//
+// Async-signal-safe (uses a zero-initialized `thread_local` fixed buffer and
+// does not allocate). Shared across C++ and Rust via FFI.
+void FuzzTestSetPendingAssertionFailureKey(const char* assertion_failure_key,
+                                           size_t assertion_failure_key_size);
+
+// Returns a pointer to the calling thread's pending assertion failure key and
+// sets `*out_size` to its byte length (or returns `nullptr` with
+// `*out_size = 0` if none is pending). Does not copy or clear the key; the
+// returned slice is not null-terminated and remains valid on the calling thread
+// until the next `FuzzTestSetPendingAssertionFailureKey()` or
+// `FuzzTestClearPendingAssertionFailureKey()` call on this thread.
+//
+// Precondition: `out_size != nullptr`.
+// Async-signal-safe (does not allocate).
+const char* FuzzTestGetPendingAssertionFailureKey(size_t* out_size);
+
+// Clears the calling thread's pending assertion failure key, if any.
+// Async-signal-safe (does not allocate).
+void FuzzTestClearPendingAssertionFailureKey();
+
 }  // extern "C"
 
 namespace fuzztest::internal {
