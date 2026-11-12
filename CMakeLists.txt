@@ -74,6 +74,7 @@ add_subdirectory(fuzztest/internal)
 add_subdirectory(fuzztest/internal/domains)
 add_subdirectory(grammar_codegen)
 add_subdirectory(grammar_codegen/generated_antlr_parser)
+add_subdirectory(rust_cpp_common)
 add_subdirectory(tools)
 
 if (FUZZTEST_BUILD_TESTING)
