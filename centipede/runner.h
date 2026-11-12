@@ -27,7 +27,7 @@
 #include "./centipede/knobs.h"
 #include "./centipede/runner_interface.h"
 #include "./centipede/runner_result.h"
-#include "./centipede/runner_utils.h"
+#include "./framework_shared/runner_utils.h"
 
 namespace fuzztest::internal {
 
